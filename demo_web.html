@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32-S3 RNDIS Bridge</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#1a1a2e;color:#eee;min-height:100vh}
+.header{background:#16213e;padding:16px;text-align:center;border-bottom:2px solid #0f3460}
+.header h1{font-size:18px;color:#e94560;margin-bottom:2px}
+.header span{font-size:11px;color:#888}
+.card{background:#16213e;margin:12px 16px;border-radius:10px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+.card h2{font-size:14px;color:#e94560;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #0f3460}
+.status-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.status-item{background:#0f3460;border-radius:6px;padding:8px 10px}
+.status-item .label{font-size:10px;color:#888;text-transform:uppercase}
+.status-item .val{font-size:13px;color:#fff;word-break:break-all}
+.status-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #0f3460}
+.status-row:last-child{border:none}
+.status-row .key{color:#888;font-size:12px}
+.status-row .val{color:#fff;font-size:12px;text-align:right}
+.btn{display:inline-block;padding:10px 20px;border:none;border-radius:6px;font-size:13px;cursor:pointer;transition:all .2s;font-weight:600}
+.btn-scan{background:#e94560;color:#fff;width:100%}
+.btn-scan:hover{background:#d63851}
+.btn-scan:disabled{background:#555;cursor:not-allowed}
+.btn-connect{background:#0f3460;color:#e94560;width:100%;margin-top:8px}
+.btn-connect:hover{background:#1a4a8a}
+.btn-connect:disabled{background:#333;color:#666}
+.list{border-radius:6px;overflow:hidden;max-height:260px;overflow-y:auto}
+.list .item{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#0f3460;border-bottom:1px solid #16213e;cursor:pointer;transition:background .2s}
+.list .item:hover{background:#1a4a8a}
+.list .item:last-child{border:none}
+.list .item .ssid{font-weight:600;font-size:13px}
+.list .item .rssi{font-size:11px;color:#888}
+.list .item .secure{font-size:11px;margin-left:6px}
+.list .empty{text-align:center;padding:30px;color:#666;font-size:13px}
+.input-row{margin-bottom:10px}
+.input-row label{display:block;font-size:11px;color:#888;margin-bottom:4px}
+.input-row input{width:100%;padding:10px;border-radius:6px;border:1px solid #0f3460;background:#1a1a2e;color:#fff;font-size:13px;outline:none}
+.input-row input:focus{border-color:#e94560}
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 20px;border-radius:6px;font-size:12px;z-index:999;opacity:0;transition:opacity .3s}
+.toast.show{opacity:1}
+.empty-state{text-align:center;padding:40px 20px;color:#666}
+.empty-state .icon{font-size:48px;margin-bottom:12px}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid #fff;border-radius:50%;border-top-color:transparent;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.signal{display:inline-block;width:14px;height:14px;vertical-align:middle;margin-right:4px}
+.footer{text-align:center;padding:16px;color:#555;font-size:11px}
+.tabs{display:flex;border-radius:8px;overflow:hidden;margin-bottom:12px}
+.tab{flex:1;padding:10px;text-align:center;background:#0f3460;color:#888;font-size:12px;cursor:pointer;transition:all .2s}
+.tab.active{background:#e94560;color:#fff}
+.tab:first-child{border-radius:8px 0 0 8px}
+.tab:last-child{border-radius:0 8px 8px 0}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>ESP32-S3 RNDIS Bridge</h1>
+  <span>WiFi &middot; USB RNDIS &middot; v2.0.2</span>
+</div>
+
+<!-- Status Card -->
+<div class="card">
+  <h2>系统状态</h2>
+  <div class="status-grid" id="status"></div>
+</div>
+
+<!-- Main Tab -->
+<div class="card">
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('scan')">扫描 WiFi</div>
+    <div class="tab" onclick="switchTab('connect')">连接网络</div>
+  </div>
+
+  <!-- Scan Tab -->
+  <div id="tab-scan">
+    <div class="list" id="scan-list">
+      <div class="empty-state">
+        <div class="icon">&#128269;</div>
+        <p>点击扫描按钮搜索 WiFi</p>
+      </div>
+    </div>
+    <button class="btn btn-scan" id="scan-btn" onclick="doScan()">扫描 WiFi</button>
+  </div>
+
+  <!-- Connect Tab -->
+  <div id="tab-connect" style="display:none">
+    <div class="input-row">
+      <label>SSID (网络名)</label>
+      <input type="text" id="connect-ssid" placeholder="输入WiFi名称" readonly>
+    </div>
+    <div class="input-row">
+      <label>密码</label>
+      <input type="password" id="connect-pass" placeholder="输入WiFi密码">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn btn-connect" id="connect-btn" onclick="doConnect()" style="flex:1">连接</button>
+      <button class="btn btn-connect" id="disconnect-btn" onclick="doDisconnect()" style="flex:1;background:#555;color:#fff">断开</button>
+    </div>
+    <div id="connect-msg" style="margin-top:10px;font-size:12px;text-align:center;color:#888"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="footer">ESP32-S3 RNDIS WiFi Bridge</div>
+
+<script>
+// ====== Mock Data (demo mode) ======
+const DEMO = true;
+
+let mockNetworks = [
+  {ssid:"MyHome_5G", rssi:-42, secure:"true"},
+  {ssid:"Office_WiFi", rssi:-55, secure:"true"},
+  {ssid:"CoffeeShop_Free", rssi:-63, secure:"false"},
+  {ssid:"Neighbor_Net", rssi:-71, secure:"true"},
+  {ssid:"Public_Hotspot", rssi:-78, secure:"false"},
+  {ssid:"IoT_Device", rssi:-80, secure:"true"},
+  {ssid:"Guest_WiFi", rssi:-85, secure:"true"},
+];
+let mockStatus = {
+  mode:"AP_STA", ap:"Started", ap_ip:"192.168.4.1", ap_cli:1,
+  sta:"Disconnected", sta_ip:"0.0.0.0", sta_ssid:"",
+  rndis:"DISCONNECTED", rndis_r:false,
+  usb_vid:"0000", usb_pid:"0000", usb_mac:"N/A"
+};
+
+let selectedSSID = "";
+let connectedSSID = "";
+
+// ====== Toast ======
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+// ====== Tab Switch ======
+function switchTab(t) {
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-scan').style.display = t==='scan' ? '' : 'none';
+  document.getElementById('tab-connect').style.display = t==='connect' ? '' : 'none';
+  event.target.classList.add('active');
+}
+
+// ====== Scan ======
+function doScan() {
+  const btn = document.getElementById('scan-btn');
+  const list = document.getElementById('scan-list');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>扫描中...';
+  list.innerHTML = '<div class="empty-state"><div class="icon">&#128269;</div><p>正在扫描...</p></div>';
+
+  if (DEMO) {
+    setTimeout(() => {
+      renderScanResults(mockNetworks);
+      btn.disabled = false;
+      btn.textContent = '重新扫描';
+    }, 1500);
+  } else {
+    // Real device: GET /scan
+    const x = new XMLHttpRequest();
+    x.onreadystatechange = function() {
+      if (x.readyState === 4) {
+        if (x.status === 200) {
+          const j = JSON.parse(x.responseText);
+          renderScanResults(j.networks || []);
+        } else {
+          list.innerHTML = '<div class="empty-state"><p>扫描失败: ' + x.status + '</p></div>';
+        }
+        btn.disabled = false;
+        btn.textContent = '重新扫描';
+      }
+    };
+    x.open('GET', '/scan', true); x.send();
+  }
+}
+
+function renderScanResults(networks) {
+  const list = document.getElementById('scan-list');
+  if (!networks.length) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">&#9888;</div><p>未发现 WiFi 网络</p></div>';
+    return;
+  }
+  let html = '';
+  networks.forEach(n => {
+    const signalIcon = n.rssi > -50 ? '&#128246;' : n.rssi > -70 ? '&#128247;' : '&#128248;';
+    const secIcon = n.secure === 'true' ? '&#128274;' : '';
+    html +=
+      '<div class="item" onclick="selectNetwork(\'' + n.ssid + '\',\'' + n.secure + '\')">' +
+        '<div>' +
+          '<span class="signal">' + signalIcon + '</span>' +
+          '<span class="ssid">' + n.ssid + '</span>' +
+          '<span class="secure">' + secIcon + '</span>' +
+        '</div>' +
+        '<span class="rssi">' + n.rssi + ' dBm</span>' +
+      '</div>';
+  });
+  list.innerHTML = html;
+}
+
+function selectNetwork(ssid, secure) {
+  selectedSSID = ssid;
+  document.getElementById('connect-ssid').value = ssid;
+  if (secure === 'false') {
+    document.getElementById('connect-pass').value = '';
+    document.getElementById('connect-pass').placeholder = '开放网络，无需密码';
+  } else {
+    document.getElementById('connect-pass').placeholder = '输入WiFi密码';
+  }
+  document.getElementById('connect-msg').textContent = '';
+  switchTab('connect');
+  document.querySelector('.tab:nth-child(2)').click();
+}
+
+// ====== Connect ======
+function doConnect() {
+  const ssid = document.getElementById('connect-ssid').value;
+  const pass = document.getElementById('connect-pass').value;
+  if (!ssid) { toast('请先选择 WiFi 网络'); return; }
+
+  const btn = document.getElementById('connect-btn');
+  btn.disabled = true;
+  btn.textContent = '连接中...';
+  document.getElementById('connect-msg').textContent = '';
+
+  if (DEMO) {
+    setTimeout(() => {
+      connectedSSID = ssid;
+      mockStatus.sta = 'Connected';
+      mockStatus.sta_ip = '192.168.1.100';
+      mockStatus.sta_ssid = ssid;
+      refreshStatus();
+      document.getElementById('connect-msg').textContent = '已连接 ' + ssid;
+      document.getElementById('connect-msg').style.color = '#4caf50';
+      btn.disabled = false;
+      btn.textContent = '连接';
+      toast('已连接到 ' + ssid);
+    }, 1200);
+  } else {
+    // Real device: POST /connect body: ssid=...&pass=...
+    const x = new XMLHttpRequest();
+    x.onreadystatechange = function() {
+      if (x.readyState === 4) {
+        if (x.status === 200) {
+          connectedSSID = ssid;
+          document.getElementById('connect-msg').textContent = x.responseText;
+          document.getElementById('connect-msg').style.color = '#4caf50';
+          refreshStatus();
+        } else {
+          document.getElementById('connect-msg').textContent = '连接失败';
+          document.getElementById('connect-msg').style.color = '#f44336';
+        }
+        btn.disabled = false;
+        btn.textContent = '连接';
+      }
+    };
+    x.open('POST', '/connect', true);
+    x.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    x.send('ssid=' + encodeURIComponent(ssid) + '&pass=' + encodeURIComponent(pass));
+  }
+}
+
+function doDisconnect() {
+  if (DEMO) {
+    connectedSSID = '';
+    mockStatus.sta = 'Disconnected';
+    mockStatus.sta_ip = '0.0.0.0';
+    mockStatus.sta_ssid = '';
+    refreshStatus();
+    document.getElementById('connect-msg').textContent = '已断开';
+    document.getElementById('connect-msg').style.color = '#888';
+    document.getElementById('connect-pass').value = '';
+    toast('已断开连接');
+  } else {
+    const x = new XMLHttpRequest();
+    x.onreadystatechange = function() {
+      if (x.readyState === 4) {
+        document.getElementById('connect-msg').textContent = x.responseText;
+        document.getElementById('connect-msg').style.color = '#888';
+        refreshStatus();
+      }
+    };
+    x.open('POST', '/disconnect', true); x.send();
+  }
+}
+
+// ====== Status Refresh ======
+function refreshStatus() {
+  if (DEMO) {
+    renderStatus(mockStatus);
+    return;
+  }
+  const x = new XMLHttpRequest();
+  x.onreadystatechange = function() {
+    if (x.readyState === 4 && x.status === 200) {
+      renderStatus(JSON.parse(x.responseText));
+    }
+  };
+  x.open('GET', '/status', true); x.send();
+}
+
+function renderStatus(s) {
+  const items = [
+    {k:'WiFi 模式', v:s.mode},
+    {k:'AP 状态', v:s.ap + ' (' + s.ap_ip + ')'},
+    {k:'AP 客户端', v:s.ap_cli + ' 个'},
+    {k:'STA 连接', v:s.sta + (s.sta_ssid ? ' [' + s.sta_ssid + ']' : '')},
+    {k:'STA IP', v:s.sta_ip},
+    {k:'RNDIS 状态', v:s.rndis},
+    {k:'RNDIS 就绪', v:s.rndis_r ? '是' : '否'},
+    {k:'USB 设备', v:'VID:' + s.usb_vid + ' PID:' + s.usb_pid},
+    {k:'USB MAC', v:s.usb_mac},
+  ];
+  let html = '';
+  items.forEach(i => {
+    html += '<div class="status-item"><div class="label">' + i.k + '</div><div class="val">' + i.v + '</div></div>';
+  });
+  document.getElementById('status').innerHTML = html;
+}
+
+// Init
+document.addEventListener('DOMContentLoaded', function() {
+  refreshStatus();
+});
+</script>
+</body>
+</html>
