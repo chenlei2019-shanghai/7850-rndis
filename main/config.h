@@ -37,6 +37,7 @@ static const rndis_device_desc_t RNDIS_DEVICE_TABLE[] = {
     {0x1e0e, 0x9001, "SIMCom RNDIS"},
     {0x0e8d, 0x2004, "MediaTek RNDIS"},
     {0x0e8d, 0x2000, "MediaTek RNDIS"},
+    {0x19a5, 0x0402, "Harris Remote NDIS"},
 };
 #define RNDIS_DEVICE_COUNT (sizeof(RNDIS_DEVICE_TABLE) / sizeof(RNDIS_DEVICE_TABLE[0]))
 
